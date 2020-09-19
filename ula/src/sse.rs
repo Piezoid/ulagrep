@@ -220,6 +220,47 @@ unsafe fn cmp(pat: &[u8], txt: &[u8]) -> bool {
 
 use super::{Match, Matches};
 
+struct TxtWin<'a> {
+    buf: __m128i,
+    it: std::slice::Iter<'a, u8>,
+}
+
+impl<'a> TxtWin<'a> {
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn new(txt: &'a [u8], offset: usize) -> Self {
+        debug_assert!(offset <= LANES);
+        Self {
+            buf: sse_load_offset(txt, offset),
+            it: txt[(LANES - offset).min(txt.len())..].iter(),
+        }
+    }
+
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn cmp_as_mask(&self, y: __m128i) -> usize {
+        _mm_movemask_epi8(_mm_cmpeq_epi8(self.buf, y)) as usize
+    }
+}
+
+impl<'a> Iterator for TxtWin<'a> {
+    type Item = Self;
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let pre_it = self.it.clone();
+        let pre_buf = self.buf;
+        let shift_buf = unsafe { _mm_bsrli_si128(pre_buf, 1) };
+        self.buf = if let Some(c) = self.it.next() {
+            unsafe { _mm_insert_epi8(shift_buf, *c as i32, LANES as i32 - 1) }
+        } else {
+            shift_buf
+        };
+
+        Some(Self {
+            buf: pre_buf,
+            it: pre_it,
+        })
+    }
+}
+
 #[inline(never)]
 #[target_feature(enable = "sse4.2")]
 pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
@@ -232,7 +273,7 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     // When the n-th char matches, the center of the NULA window (x=0) will be at position MAXK+n
     let patoffset = MAXK - 1;
     let pat_prefix_vec = sse_load_offset(pat, patoffset);
-    let mut txt_vec = sse_load_offset(txt, patoffset);
+    //let mut txt_vec = sse_load_offset(txt, patoffset);
     // How many chars are preloaded in txt_vec, The pointer in txt is txt_vec_len chars after the current position.
     let txt_vec_len = (LANES - patoffset) as usize;
     let pat_vec_len = pat.len().min(txt_vec_len);
@@ -256,18 +297,18 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     // simula_fast() unrolls the k+1 first iterations, that requires that the pattern length,
     // minus 1chr for the minimal match of 1 char, to be greater than k
     let fast_iters_end = if txt.len() >= pat.len() + txt_vec_len - 1 && pat.len() > k + 1 {
-        txt.len() - (pat.len() - 1)
+        txt.len() - (pat.len() - 1) - txt_vec_len
     } else {
-        txt_vec_len
+        0
     };
 
-    for pos in txt_vec_len..fast_iters_end {
-        let bveq = _mm_movemask_epi8(_mm_cmpeq_epi8(txt_vec, pat_prefix_vec)) as usize >> patoffset;
+    let mut it = TxtWin::new(txt, patoffset).enumerate();
+    for (pos, win) in (&mut it).take(fast_iters_end) {
+        let bveq = win.cmp_as_mask(pat_prefix_vec) as usize >> patoffset;
         let offset = cttz_nonzero(bveq);
 
         // If one of the k+1 chars of the pattern matches with the current suffixes
-        if bveq != 0 {
-            let txt_suffix = txt.get_unchecked(pos..);
+        let maybe_match = if bveq != 0 {
             if k > offset {
                 let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
                 let keff = k - offset;
@@ -275,43 +316,45 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
                     keff,
                     pat.get_unchecked(offset + 1..),
                     ula,
-                    txt_vec,
-                    txt_suffix,
+                    win.buf,
+                    win.it.as_slice(),
                 ) {
-                    crate::push_match(
-                        res,
-                        Match {
-                            pos: pos - txt_vec_len,
-                            delta: idx as i8 - (MAXK + offset) as i8,
-                            dist: (k + 1) as u8 - score,
-                        },
-                    );
+                    Some(Match {
+                        pos: pos,
+                        delta: idx as i8 - (MAXK + offset) as i8,
+                        dist: (k + 1) as u8 - score,
+                    })
+                } else {
+                    None
                 }
-            } else if bveq == eqkeff0_mask
-                && (pat.len() <= txt_vec_len || cmp(pat.get_unchecked(txt_vec_len..), txt_suffix))
-            {
-                // Case offset == k. See note on eqkeff0_mask declaration
-                debug_assert!(cmp(&pat[offset..], &txt[offset + pos - txt_vec_len..]));
-                crate::push_match(
-                    res,
-                    Match {
-                        pos: pos - txt_vec_len,
+            } else {
+                if bveq == eqkeff0_mask
+                    && (pat.len() <= txt_vec_len
+                        || cmp(pat.get_unchecked(txt_vec_len..), win.it.as_slice()))
+                {
+                    // Case offset == k. See note on eqkeff0_mask declaration
+                    debug_assert!(cmp(&pat[offset..], &txt[offset + pos..]));
+                    Some(Match {
+                        pos: pos,
                         delta: 0,
                         dist: k as u8,
-                    },
-                );
+                    })
+                } else {
+                    None
+                }
             }
+        } else {
+            None
+        };
+
+        if let Some(m) = maybe_match {
+            crate::push_match(res, m);
         }
-        txt_vec = _mm_insert_epi8(
-            _mm_bsrli_si128(txt_vec, 1),
-            *txt.get_unchecked(pos) as i32,
-            LANES as i32 - 1,
-        );
     }
 
-    let slow_iter_end = txt.len() + k + 1 + txt_vec_len - pat.len();
-    for pos in fast_iters_end..slow_iter_end {
-        let bveq = _mm_movemask_epi8(_mm_cmpeq_epi8(txt_vec, pat_prefix_vec)) as usize >> patoffset;
+    let slow_iter_end = txt.len() + k + 1 - pat.len();
+    for (pos, win) in it.take(slow_iter_end - fast_iters_end) {
+        let bveq = win.cmp_as_mask(pat_prefix_vec) as usize >> patoffset;
         let offset = cttz_nonzero(bveq);
 
         if likely(bveq != 0 && offset <= k) {
@@ -321,11 +364,11 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
                 keff,
                 pat.get_unchecked(offset + 1..),
                 ula,
-                txt_vec,
-                txt.get_unchecked(pos..),
+                win.buf,
+                win.it.as_slice(),
             ) {
                 res.push(Match {
-                    pos: pos - txt_vec_len,
+                    pos: pos,
                     delta: idx as i8 - (MAXK + offset) as i8,
                     dist: (k + 1) as u8 - score,
                 });
@@ -333,11 +376,6 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
 
             debug_only!(println!());
         }
-
-        txt_vec = _mm_bsrli_si128(txt_vec, 1);
-        if pos < txt.len() {
-            txt_vec = _mm_insert_epi8(txt_vec, *txt.get_unchecked(pos) as i32, LANES as i32 - 1);
-        } // Otherwise \0 are shifted in
     }
 }
 
