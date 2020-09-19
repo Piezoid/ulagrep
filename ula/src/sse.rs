@@ -72,15 +72,12 @@ unsafe fn init_ula(k: usize, center: usize) -> __m128i {
 /// The parameter k is only used to bound the number of deletions.
 /// Otherwise the algorithm is offset invariant (the x=0 column can be anywhere).
 #[inline(always)]
-unsafe fn ula_push_lightk(vec0: __m128i, u_: __m128i, k: usize) -> __m128i {
+unsafe fn ula_push_lightk(vec0: __m128i, u: __m128i, k: usize) -> __m128i {
     let ones = _mm_set1_epi8(0x01);
     let dec_sat = |x| _mm_subs_epu8(x, ones);
 
     let vec_sub = dec_sat(vec0);
     let vec_ins = _mm_bsrli_si128(vec_sub, 1);
-
-    let trues = _mm_set1_epi8(-1);
-    let notu = _mm_xor_si128(u_, trues);
 
     let vec_ndelid = {
         let mut vacc = vec0;
@@ -93,12 +90,7 @@ unsafe fn ula_push_lightk(vec0: __m128i, u_: __m128i, k: usize) -> __m128i {
         vacc
     };
 
-    // let vec = _mm_blendv_epi8(_mm_max_epu8(vec_ins, vec_sub), vec_ndelid, u_);
-    let vec = _mm_max_epu8(
-        _mm_subs_epu8(vec_ndelid, _mm_and_si128(notu, ones)),
-        vec_ins,
-    );
-    vec
+    _mm_blendv_epi8(_mm_max_epu8(vec_ins, vec_sub), vec_ndelid, u)
 }
 
 /// SSE simulation of NULA for a single extenssion with txt right-padded with zeroes
