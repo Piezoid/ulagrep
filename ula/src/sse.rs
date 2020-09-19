@@ -143,7 +143,7 @@ unsafe fn simula_fast_fat(
 ) -> Option<(u8, u8)> {
     debug_assert!(txt_win.it.as_slice().len() >= pat.len());
     debug_assert!(k <= MAXK && k > 0);
-    std::intrinsics::assume(k <= MAXK && k > 0);
+    //std::intrinsics::assume(k <= MAXK && k > 0);
 
     let mut pat_ptr = pat.as_ptr();
     let pat_ptr_end = pat_ptr.add(pat.len());
@@ -156,27 +156,25 @@ unsafe fn simula_fast_fat(
                 _mm_cmpeq_epi8(txt_win.buf, _mm_set1_epi8(*pat_ptr as i8)),
                 $k,
             );
-            std::intrinsics::assume(txt_win.it.clone().next().is_some());
-            txt_win.next();
+            txt_win.next_unchecked();
             pat_ptr = pat_ptr.add(1);
         };
     }
     macro_rules! iter_or_loop {
         ($j:expr) => {
-            loop {
-                iter!($j);
-                if k == $j {
+            iter!($j);
+            debug_assert!(_mm_test_all_zeros(ula, ula) == 0);
+            if k == $j {
+                loop {
+                    iter!($j);
                     if _mm_test_all_zeros(ula, ula) != 0 {
                         return None;
                     }
                     if pat_ptr >= pat_ptr_end {
                         return Some(sse_max_index(&ula));
                     }
-                    continue;
                 }
-                break;
             }
-            debug_assert!(_mm_test_all_zeros(ula, ula) == 0);
         };
     }
 
@@ -187,7 +185,7 @@ unsafe fn simula_fast_fat(
     iter_or_loop!(5);
     iter_or_loop!(6);
     iter_or_loop!(7);
-    std::intrinsics::unreachable()
+    None
 }
 
 /// Left pads bytes from `data` with `offset` zeros, returns a sse registers and the remaining suffix
@@ -228,6 +226,17 @@ impl<'a> TxtWin<'a> {
             buf: sse_load_offset(txt, offset),
             it: txt[(LANES - offset).min(txt.len())..].iter(),
         }
+    }
+
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn next_unchecked(&mut self) {
+        let slice = self.it.as_slice();
+        self.buf = _mm_insert_epi8(
+            _mm_bsrli_si128(self.buf, 1),
+            *slice.get_unchecked(0) as i32,
+            LANES as i32 - 1,
+        );
+        self.it = slice.get_unchecked(1..).iter();
     }
 
     #[target_feature(enable = "sse4.2")]
