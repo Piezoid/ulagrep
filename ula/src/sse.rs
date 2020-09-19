@@ -149,7 +149,6 @@ unsafe fn simula_fast_fat(
     let mut pat_ptr = pat.as_ptr();
     let pat_ptr_end = pat_ptr.add(pat.len());
     let mut txt_ptr = txt.as_ptr();
-    
     macro_rules! iter {
         ($k: expr) => {
             debug_assert!(pat_ptr < pat_ptr_end);
@@ -167,26 +166,25 @@ unsafe fn simula_fast_fat(
             pat_ptr = pat_ptr.add(1);
         };
     }
-    
     macro_rules! iter_or_loop {
         ($j:expr) => {
-            if $j == k {
-                loop {
-                    if pat_ptr >= pat_ptr_end {
-                        return Some(sse_max_index(&ula));
-                    }
-                    iter!($j);
+            loop {
+                iter!($j);
+                if k == $j {
                     if _mm_test_all_zeros(ula, ula) != 0 {
                         return None;
                     }
+                    if pat_ptr >= pat_ptr_end {
+                        return Some(sse_max_index(&ula));
+                    }
+                    continue;
                 }
+                break;
             }
-            iter!($j + 1);
             debug_assert!(_mm_test_all_zeros(ula, ula) == 0);
         };
     }
 
-    iter!(1);
     iter_or_loop!(1);
     iter_or_loop!(2);
     iter_or_loop!(3);
