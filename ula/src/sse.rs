@@ -109,26 +109,20 @@ unsafe fn simula_slow(
     k: usize,
     pat: &[u8],
     mut ula: __m128i,
-    mut txt_vec: __m128i,
-    txt: &[u8],
+    txt_win: TxtWin<'_>,
 ) -> Option<(u8, u8)> {
-    for i in 0..pat.len() {
-        ula = ula_push_lightk(
-            ula,
-            _mm_cmpeq_epi8(txt_vec, _mm_set1_epi8(*pat.get_unchecked(i) as i8)),
-            (i + 1).min(k) as usize,
-        );
-
-        if _mm_test_all_zeros(ula, ula) != 0 {
-            return None;
+    for (i, (&pc, win)) in pat.iter().zip(txt_win).enumerate() {
+        let vec_eq = win.cmp_char(pc);
+        if i < k {
+            ula = ula_push_lightk(ula, vec_eq, i + 1);
+            debug_assert!(_mm_test_all_zeros(ula, ula) == 0);
+        } else {
+            ula = ula_push_lightk(ula, vec_eq, k + 1);
+            if _mm_test_all_zeros(ula, ula) != 0 {
+                return None;
+            }
         }
-
-        txt_vec = _mm_bsrli_si128(txt_vec, 1);
-        if i < txt.len() {
-            txt_vec = _mm_insert_epi8(txt_vec, *txt.get_unchecked(i) as i32, LANES as i32 - 1);
-        } // Otherwise shift in zeroes
     }
-
     Some(sse_max_index(&ula))
 }
 
@@ -151,11 +145,7 @@ unsafe fn simula_fast_fat(
     macro_rules! iter {
         ($k: expr) => {
             debug_assert!(pat_ptr < pat_ptr_end);
-            ula = ula_push_lightk(
-                ula,
-                _mm_cmpeq_epi8(txt_win.buf, _mm_set1_epi8(*pat_ptr as i8)),
-                $k,
-            );
+            ula = ula_push_lightk(ula, txt_win.cmp_char(*pat_ptr), $k);
             txt_win.next_unchecked();
             pat_ptr = pat_ptr.add(1);
         };
@@ -242,6 +232,11 @@ impl<'a> TxtWin<'a> {
     #[target_feature(enable = "sse4.2")]
     unsafe fn cmp_as_mask(&self, y: __m128i) -> usize {
         _mm_movemask_epi8(_mm_cmpeq_epi8(self.buf, y)) as usize
+    }
+
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn cmp_char(&self, y: u8) -> __m128i {
+        _mm_cmpeq_epi8(self.buf, _mm_set1_epi8(y as i8))
     }
 }
 
@@ -347,6 +342,7 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
             None
         };
 
+        // Using Iterator::filter_map + Vec::extend was slow...
         if let Some(m) = maybe_match {
             crate::push_match(res, m);
         }
@@ -354,27 +350,20 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
 
     let slow_iter_end = txt.len() + k + 1 - pat.len();
     for (pos, win) in it.take(slow_iter_end - fast_iters_end) {
-        let bveq = win.cmp_as_mask(pat_prefix_vec) as usize >> patoffset;
+        let bveq = win.cmp_as_mask(pat_prefix_vec) >> patoffset;
         let offset = cttz_nonzero(bveq);
 
         if likely(bveq != 0 && offset <= k) {
             let keff = k - offset;
             let ula = init_ula(keff, MAXK + offset);
-            if let Some((idx, score)) = simula_slow(
-                keff,
-                pat.get_unchecked(offset + 1..),
-                ula,
-                win.buf,
-                win.it.as_slice(),
-            ) {
+            if let Some((idx, score)) = simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win)
+            {
                 res.push(Match {
                     pos: pos,
                     delta: idx as i8 - (MAXK + offset) as i8,
                     dist: (k + 1) as u8 - score,
                 });
             }
-
-            debug_only!(println!());
         }
     }
 }
