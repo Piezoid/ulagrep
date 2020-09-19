@@ -139,30 +139,26 @@ unsafe fn simula_fast_fat(
     k: usize,
     pat: &[u8],
     mut ula: __m128i,
-    mut txt_vec: __m128i,
-    txt: &[u8],
+    mut txt_win : TxtWin<'_>
 ) -> Option<(u8, u8)> {
-    debug_assert!(txt.len() >= pat.len());
+    debug_assert!(txt_win.it.as_slice().len() >= pat.len());
     debug_assert!(k <= MAXK && k > 0);
     std::intrinsics::assume(k <= MAXK && k > 0);
 
     let mut pat_ptr = pat.as_ptr();
     let pat_ptr_end = pat_ptr.add(pat.len());
-    let mut txt_ptr = txt.as_ptr();
+
     macro_rules! iter {
         ($k: expr) => {
             debug_assert!(pat_ptr < pat_ptr_end);
             ula = ula_push_lightk(
                 ula,
-                _mm_cmpeq_epi8(txt_vec, _mm_set1_epi8(*pat_ptr as i8)),
+
+                _mm_cmpeq_epi8(txt_win.buf, _mm_set1_epi8(*pat_ptr as i8)),
                 $k,
             );
-            txt_vec = _mm_insert_epi8(
-                _mm_bsrli_si128(txt_vec, 1),
-                *txt_ptr as i32,
-                LANES as i32 - 1,
-            );
-            txt_ptr = txt_ptr.add(1);
+            std::intrinsics::assume(txt_win.it.clone().next().is_some());
+            txt_win.next();
             pat_ptr = pat_ptr.add(1);
         };
     }
@@ -316,8 +312,7 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
                     keff,
                     pat.get_unchecked(offset + 1..),
                     ula,
-                    win.buf,
-                    win.it.as_slice(),
+                    win
                 ) {
                     Some(Match {
                         pos: pos,
