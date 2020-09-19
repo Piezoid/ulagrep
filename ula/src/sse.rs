@@ -139,7 +139,7 @@ unsafe fn simula_fast_fat(
     k: usize,
     pat: &[u8],
     mut ula: __m128i,
-    mut txt_win : TxtWin<'_>
+    mut txt_win: TxtWin<'_>,
 ) -> Option<(u8, u8)> {
     debug_assert!(txt_win.it.as_slice().len() >= pat.len());
     debug_assert!(k <= MAXK && k > 0);
@@ -153,7 +153,6 @@ unsafe fn simula_fast_fat(
             debug_assert!(pat_ptr < pat_ptr_end);
             ula = ula_push_lightk(
                 ula,
-
                 _mm_cmpeq_epi8(txt_win.buf, _mm_set1_epi8(*pat_ptr as i8)),
                 $k,
             );
@@ -308,12 +307,9 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
             if k > offset {
                 let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
                 let keff = k - offset;
-                if let Some((idx, score)) = simula_fast_fat(
-                    keff,
-                    pat.get_unchecked(offset + 1..),
-                    ula,
-                    win
-                ) {
+                if let Some((idx, score)) =
+                    simula_fast_fat(keff, pat.get_unchecked(offset + 1..), ula, win)
+                {
                     Some(Match {
                         pos: pos,
                         delta: idx as i8 - (MAXK + offset) as i8,
