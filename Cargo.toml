@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "ula",
+    "ulagrep",
+]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+debug=2
+#panic = "abort"
+
+[profile.bench]
+opt-level=3
+debug=2
+#codegen-units = 1
+#panic = "abort"

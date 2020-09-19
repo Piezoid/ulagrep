@@ -1,0 +1,3 @@
+[submodule "triple_accel"]
+	path = triple_accel
+	url = https://github.com/Daniel-Liu-c0deb0t/triple_accel/

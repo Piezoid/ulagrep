@@ -1,0 +1,25 @@
+[package]
+name = "ula"
+version = "0.1.0"
+authors = ["Maël Kerbiriou <piezo.w.dimd@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+# [[bench]]
+# name = "rand_benchmarks"
+# harness = false
+
+[[bench]]
+name = "randsse_benchmarks"
+harness = false
+
+[dependencies]
+# num-integer = "0.1.42"
+
+[dev-dependencies]
+criterion = "0.3.3"
+#criterion-macro = "0.3.3"
+rand = { version="0.7.3", features=["small_rng"]} 
+triple_accel = { path = "../triple_accel" }
