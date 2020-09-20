@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::*;
 
 use rand::distributions::{Distribution, Uniform};
@@ -50,70 +52,67 @@ fn get_url_data<'a, P: AsRef<Path>>(url: &'a str, out_dir: P) -> Result<(Vec<u8>
     Ok((buf, name))
 }
 
-fn bench_genome(c: &mut Criterion) {
-    bench_data(
-        c,
-        "https://github.com/smart-tool/smart/raw/master/data/genome/ecoli.txt",
-        1 << 19,
-    )
+fn bench_corpora(c: &mut Criterion) {
+    for url in ["https://github.com/smart-tool/smart/raw/master/data/genome/ecoli.txt",
+    "https://github.com/smart-tool/smart/raw/master/data/protein/sc.txt",
+    "https://github.com/smart-tool/smart/blob/master/data/englishTexts/bible.txt",
+    ].iter() {
+        bench_data(c, url, 1<<19); 
+    }
 }
-
-use std::time::Duration;
 
 fn bench_data(c: &mut Criterion, url: &str, size: usize) {
     let (data, name) = get_url_data(url, "../data").expect("Could not get benchmark data");
     let size = data.len().min(size);
     let data = &data[..size];
+    let mut results = Vec::with_capacity(256);
 
     let mut group = c.benchmark_group(name);
+    group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Bytes(size as u64));
-    group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(30));
     group.sample_size(50);
-    
-    let mut results = Vec::new();
+    group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
     for k in 1..=7 {
         for &len in [1, 2, 4, 6, 8, 10, 16, 32, 64, 128, 256, 512].iter() {
             if len < k + 1 {
                 continue;
             }
+            let arg_str = format!("k{}_m{:03}", k, len);
 
             let mut pats = Uniform::from(0..(size - len))
                 .sample_iter(SmallRng::seed_from_u64(0))
                 .map(|i| &data[i..i + len]);
 
-            group.bench_with_input(
-                BenchmarkId::new("ULA_SSE", format!("k{}_m{}", k, len)),
-                &k,
-                |b, &k| {
-                    b.iter(|| {
-                        results.clear();
-                        ula::search(k as usize, pats.next().unwrap(), &data, &mut results);
-                        debug_assert!(results.len() > 0);
-                        results.len()
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("ULA_SSE", &arg_str), &k, |b, &k| {
+                b.iter(|| {
+                    results.clear();
+                    ula::search(
+                        black_box(k as usize),
+                        black_box(pats.next().unwrap()),
+                        black_box(&data),
+                        black_box(&mut results),
+                    );
+                    debug_assert!(results.len() > 0);
+                    results.len()
+                });
+            });
 
-            group.bench_with_input(
-                BenchmarkId::new("triple_accel", format!("k{}_m{}", k, len)),
-                &k,
-                |b, &k| {
-                    b.iter(|| {
-                        levenshtein_search_simd_with_opts(
-                            pats.next().unwrap(),
-                            &data,
-                            k as u32,
-                            SearchType::All,
-                            LEVENSHTEIN_COSTS,
-                            false,
-                        )
-                        .last()
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("triple_accel", &arg_str), &k, |b, &k| {
+                b.iter(|| {
+                    levenshtein_search_simd_with_opts(
+                        black_box(pats.next().unwrap()),
+                        black_box(&data),
+                        black_box(k as u32),
+                        black_box(SearchType::All),
+                        black_box(LEVENSHTEIN_COSTS),
+                        black_box(false),
+                    )
+                    .last()
+                });
+            });
 
             // group.bench_with_input(
             //     BenchmarkId::new("agrep", format!("k{}_m{}", k, len)),
@@ -148,5 +147,5 @@ fn bench_data(c: &mut Criterion, url: &str, size: usize) {
     group.finish();
 }
 
-criterion_group!(benchg, bench_genome);
+criterion_group!(benchg, bench_corpora);
 criterion_main!(benchg);
