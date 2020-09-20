@@ -1,7 +1,6 @@
-use crate::*;
-type BoxStr = Vec<u8>;
+type BString = Vec<u8>;
 
-fn pad(txt: &[u8], pad: char, l: usize, r: usize) -> BoxStr {
+fn pad(txt: &[u8], pad: char, l: usize, r: usize) -> BString {
     [
         &vec![pad as u8; l as usize],
         txt,
@@ -10,7 +9,7 @@ fn pad(txt: &[u8], pad: char, l: usize, r: usize) -> BoxStr {
     .concat()
 }
 
-fn forall_mutations<F: FnMut(&[u8], BoxStr, usize, YInt)>(max_dist: usize, mut f: F) {
+fn forall_mutations<F: FnMut(&[u8], BString, usize, isize)>(max_dist: usize, mut f: F) {
     let pat = b"ABCDEFGHIJKLABCDEFGHIJKLABCDEFGHIJKL";
     let subs = b"abcdefghijklabcdefghijklabcdefghijkl";
 
@@ -74,21 +73,9 @@ pub fn test_simple_patterns(
         for lpad in 0..max_padding {
             for rpad in 0..max_padding {
                 let txt = &pad(&txt, '$', lpad, rpad);
-                //println!("m:{:02} k:{} d:{:+} {}", pat.len(), dist, delta, str::from_utf8(&txt).unwrap());
-                debug_only! {
-                println!(
-                    "pos dist={} delta={} txt={:?} pad={},{}",
-                    dist,
-                    delta,
-                    str::from_utf8(&txt).unwrap(),
-                    lpad,
-                    rpad,
-                );
-                }
 
                 unsafe { search(dist as usize, pat, txt, &mut res) };
                 assert!(res.len() > 0);
-                debug_only!(println!("{:?}", res));
                 for occ in res.iter() {
                     assert_eq!(occ.pos as usize, lpad);
                     assert_eq!(occ.dist as usize, dist);
@@ -99,20 +86,12 @@ pub fn test_simple_patterns(
                     println!("k:{}, pat:{:?} txt:{:?} {:?}", dist, std::str::from_utf8(pat).unwrap(),std::str::from_utf8(txt).unwrap(), res);
                 }
                 res.clear();
+
                 if dist > 0 {
-                    debug_only! {
-                        println!(
-                            "neg dist={} delta={} txt={:?}",
-                            dist,
-                            delta,
-                            str::from_utf8(&txt).unwrap()
-                        );
-                    }
                     unsafe { search(dist as usize - 1, pat, &txt, &mut res) };
                     assert!(res.len() == 0);
                 }
                 npat += 1;
-                debug_only!(println!("---------------"));
             }
         }
     });

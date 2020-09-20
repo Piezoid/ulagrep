@@ -1,19 +1,20 @@
-use crate::*;
 use std::arch::x86_64::*;
 use std::intrinsics::cttz_nonzero;
-use std::intrinsics::{likely, unlikely};
 
 const LANES: usize = 16;
 pub const MAXK: usize = LANES / 2 - 1; // Maximum number of error and position of column x=0 in the vector
 
+#[allow(dead_code)]
 fn sse_to_bytes(x: &__m128i) -> &[u8] {
     unsafe { std::slice::from_raw_parts((x as *const _) as *const u8, 16) }
 }
 
+#[allow(dead_code)]
 fn sse_to_str(x: &__m128i) -> &str {
     std::str::from_utf8(sse_to_bytes(x)).unwrap()
 }
 
+#[allow(dead_code)]
 #[target_feature(enable = "sse4.2")]
 unsafe fn compare_sse(a: __m128i, b: __m128i) -> bool {
     _mm_test_all_ones(_mm_cmpeq_epi8(a, b)) != 0
@@ -35,37 +36,6 @@ unsafe fn sse_max_index(x: &__m128i) -> (u8, u8) {
 
     let idx = 2 * _mm_extract_epi8(mp, 2) + odd as i32; // Converts u16 minimum indice to original u8 indices
     (idx as u8, 0xffu8 ^ min as u8)
-}
-
-#[target_feature(enable = "sse4.2")]
-unsafe fn sse_idx() -> __m128i {
-    _mm_set_epi8(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
-}
-
-#[target_feature(enable = "sse4.2")]
-unsafe fn init_ula2(k: usize) -> __m128i {
-    let ula = _mm_subs_epu8(
-        _mm_set1_epi8(1 + k as i8),
-        _mm_abs_epi8(_mm_sub_epi8(_mm_set1_epi8(14 - k as i8), sse_idx())),
-    );
-    let p = (&ula as *const _) as *const u8;
-    debug_assert_eq!(*p.add(LANES - 2 - k), (1 + k) as u8);
-    ula
-}
-
-#[target_feature(enable = "sse4.2")]
-unsafe fn init_ula_stack(k: usize, center: usize) -> __m128i {
-    let mut vec = [0u8; LANES];
-    vec[center as usize] = (k + 1) as u8;
-    *((&vec as *const _) as *const __m128i)
-}
-
-#[target_feature(enable = "sse4.2")]
-unsafe fn init_ula(k: usize, center: usize) -> __m128i {
-    _mm_and_si128(
-        _mm_cmpeq_epi8(sse_idx(), _mm_set1_epi8(center as i8)),
-        _mm_set1_epi8((k + 1) as i8),
-    )
 }
 
 /// Single iteration of NULA.
@@ -345,7 +315,7 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
         let bveq = win.cmp_as_mask(pat_prefix_vec) >> patoffset;
         let offset = cttz_nonzero(bveq);
 
-        if likely(bveq != 0 && offset <= k) {
+        if bveq != 0 && offset <= k {
             let keff = k - offset;
             let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
             if let Some((idx, score)) = simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win)

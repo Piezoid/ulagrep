@@ -1,18 +1,7 @@
 #![feature(stdsimd, core_intrinsics)]
 
-// #[cfg(debug_assertions)]
-// macro_rules! debug_only {
-//     ( $( $ss:stmt );* ; ) => {  $( $ss )*  };
-//     ( $( $ss:stmt );* ) => {  $( $ss )*  };
-// }
 
-// #[cfg(not(debug_assertions))]
-macro_rules! debug_only {
-    ( $( $ss:stmt );* ; ) => {};
-    ( $( $ss:stmt );* ) => {};
-}
-
-//#[cfg(target_feature = "sse4.1")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod sse;
 
 #[cfg(test)]
@@ -39,9 +28,6 @@ fn push_match(vec: &mut Matches, m: Match) {
     vec.push(m)
 }
 
-
-type XInt = u8;
-type YInt = isize;
 
 pub fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     assert!(
