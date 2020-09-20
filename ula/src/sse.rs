@@ -87,13 +87,16 @@ impl<'a> WinSuffixes<'a> {
 
     #[target_feature(enable = "sse4.2")]
     unsafe fn next_unchecked(&mut self) {
-        let slice = self.it.as_slice();
-        self.buf = _mm_insert_epi8(
-            _mm_bsrli_si128(self.buf, 1),
-            *slice.get_unchecked(0) as i32,
-            LANES as i32 - 1,
-        );
-        self.it = slice.get_unchecked(1..).iter();
+        let shift_buf = _mm_bsrli_si128(self.buf, 1);
+        self.buf = if let Some(c) = self.it.next() {
+            _mm_insert_epi8(shift_buf, *c as i32, LANES as i32 - 1)
+        } else {
+            debug_assert!(
+                false,
+                "End of buffer reached in WinSuffixes::next_unchecked()"
+            );
+            std::hint::unreachable_unchecked()
+        };
     }
 
     #[target_feature(enable = "sse4.2")]
@@ -186,8 +189,7 @@ unsafe fn simula_fast_fat(
                     iter!($j);
                     if _mm_test_all_zeros(ula, ula) != 0 {
                         return None;
-                    }
-                    if pat_ptr >= pat_ptr_end {
+                    } else if pat_ptr >= pat_ptr_end {
                         return Some(sse_maxpos_epu8(&ula));
                     }
                 }
