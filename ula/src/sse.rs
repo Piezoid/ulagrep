@@ -1,6 +1,8 @@
 use std::arch::x86_64::*;
 use std::intrinsics::cttz_nonzero;
 
+use super::{Match, Matches};
+
 const LANES: usize = 16;
 pub const MAXK: usize = LANES / 2 - 1; // Maximum number of error and position of column x=0 in the vector
 
@@ -20,12 +22,16 @@ unsafe fn compare_sse(a: __m128i, b: __m128i) -> bool {
     _mm_test_all_ones(_mm_cmpeq_epi8(a, b)) != 0
 }
 
+/// Returns the maximum u8 and its position inside a SSE register
 #[inline(always)]
-unsafe fn sse_max_index(x: &__m128i) -> (u8, u8) {
-    let y = _mm_xor_si128(*x, _mm_set1_epi8(-1)); // Inverse ordering
-    let mp_odd = _mm_minpos_epu16(y); // Compares odd u8 as in u16's high byte
+unsafe fn sse_maxpos_epu8(x: &__m128i) -> (u8, u8) {
+    // Inverse ordering
+    let y = _mm_xor_si128(*x, _mm_set1_epi8(-1));
+    // Compares odd u8 as in u16's high byte, results is the minimum in the two lowest byte and it's position in the third byte
+    let mp_odd = _mm_minpos_epu16(y);
     let mp_even = _mm_minpos_epu16(_mm_slli_epi16(y, 8));
-    let min_odd = _mm_extract_epi8(mp_odd, 1); // high byte of u16s minimum
+    // Extracts high byte of the minimum u16
+    let min_odd = _mm_extract_epi8(mp_odd, 1);
     let min_even = _mm_extract_epi8(mp_even, 1);
     let odd = min_odd <= min_even;
     let (mp, min) = if odd {
@@ -33,8 +39,8 @@ unsafe fn sse_max_index(x: &__m128i) -> (u8, u8) {
     } else {
         (mp_even, min_even)
     };
-
-    let idx = 2 * _mm_extract_epi8(mp, 2) + odd as i32; // Converts u16 minimum indice to original u8 indices
+    // Converts the indice of the minimal u16 to the corresponding u8 indice in x
+    let idx = 2 * _mm_extract_epi8(mp, 2) + odd as i32;
     (idx as u8, 0xffu8 ^ min as u8)
 }
 
@@ -63,6 +69,68 @@ unsafe fn ula_push_lightk(vec0: __m128i, u: __m128i, k: usize) -> __m128i {
     _mm_blendv_epi8(_mm_max_epu8(vec_ins, vec_sub), vec_ndelid, u)
 }
 
+/// An iterator over the suffixes of a bytestring.
+/// Suffixes are encoded as a prefix loaded in a SIMD vector and a tail slice iterator.
+/// Yield itself as its in preincrement state, allowing to write quadratic search algorithm.
+struct WinSuffixes<'a> {
+    buf: __m128i,
+    it: std::slice::Iter<'a, u8>,
+}
+
+impl<'a> WinSuffixes<'a> {
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn new(txt: &'a [u8], offset: usize) -> Self {
+        debug_assert!(offset <= LANES);
+        Self {
+            buf: sse_load_offset(txt, offset),
+            it: txt[(LANES - offset).min(txt.len())..].iter(),
+        }
+    }
+
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn next_unchecked(&mut self) {
+        let slice = self.it.as_slice();
+        self.buf = _mm_insert_epi8(
+            _mm_bsrli_si128(self.buf, 1),
+            *slice.get_unchecked(0) as i32,
+            LANES as i32 - 1,
+        );
+        self.it = slice.get_unchecked(1..).iter();
+    }
+
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn cmp_as_mask(&self, y: __m128i) -> usize {
+        _mm_movemask_epi8(_mm_cmpeq_epi8(self.buf, y)) as usize
+    }
+
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn cmp_char(&self, y: u8) -> __m128i {
+        _mm_cmpeq_epi8(self.buf, _mm_set1_epi8(y as i8))
+    }
+}
+
+impl Iterator for WinSuffixes<'_> {
+    type Item = Self;
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let pre_it = self.it.clone();
+        let pre_buf = self.buf;
+        let shift_buf = unsafe { _mm_bsrli_si128(pre_buf, 1) };
+        self.buf = if let Some(c) = self.it.next() {
+            unsafe { _mm_insert_epi8(shift_buf, *c as i32, LANES as i32 - 1) }
+        } else {
+            shift_buf
+        };
+
+        Some(Self {
+            buf: pre_buf,
+            it: pre_it,
+        })
+    }
+}
+
+impl std::iter::FusedIterator for WinSuffixes<'_> {}
+
 /// SSE simulation of NULA for a single extenssion with txt right-padded with zeroes
 /// txt_vec is preloaded with a prefix of the text at the right offset (the algorithm in offset invariant)
 /// txt contains the rest of the text.
@@ -71,7 +139,7 @@ unsafe fn simula_slow(
     k: usize,
     pat: &[u8],
     mut ula: __m128i,
-    txt_win: TxtWin<'_>,
+    txt_win: WinSuffixes<'_>,
 ) -> Option<(u8, u8)> {
     for (i, (&pc, win)) in pat.iter().zip(txt_win).enumerate() {
         let vec_eq = win.cmp_char(pc);
@@ -85,7 +153,7 @@ unsafe fn simula_slow(
             }
         }
     }
-    Some(sse_max_index(&ula))
+    Some(sse_maxpos_epu8(&ula))
 }
 
 /// SSE simulation of NULA for a single extenssion with no padding performed, k must be greater than 0
@@ -95,7 +163,7 @@ unsafe fn simula_fast_fat(
     k: usize,
     pat: &[u8],
     mut ula: __m128i,
-    mut txt_win: TxtWin<'_>,
+    mut txt_win: WinSuffixes<'_>,
 ) -> Option<(u8, u8)> {
     debug_assert!(txt_win.it.as_slice().len() >= pat.len());
     debug_assert!(k <= MAXK && k > 0);
@@ -123,7 +191,7 @@ unsafe fn simula_fast_fat(
                         return None;
                     }
                     if pat_ptr >= pat_ptr_end {
-                        return Some(sse_max_index(&ula));
+                        return Some(sse_maxpos_epu8(&ula));
                     }
                 }
             }
@@ -161,65 +229,6 @@ unsafe fn cmp(pat: &[u8], txt: &[u8]) -> bool {
         }
     }
     true
-}
-
-use super::{Match, Matches};
-
-struct TxtWin<'a> {
-    buf: __m128i,
-    it: std::slice::Iter<'a, u8>,
-}
-
-impl<'a> TxtWin<'a> {
-    #[target_feature(enable = "sse4.2")]
-    unsafe fn new(txt: &'a [u8], offset: usize) -> Self {
-        debug_assert!(offset <= LANES);
-        Self {
-            buf: sse_load_offset(txt, offset),
-            it: txt[(LANES - offset).min(txt.len())..].iter(),
-        }
-    }
-
-    #[target_feature(enable = "sse4.2")]
-    unsafe fn next_unchecked(&mut self) {
-        let slice = self.it.as_slice();
-        self.buf = _mm_insert_epi8(
-            _mm_bsrli_si128(self.buf, 1),
-            *slice.get_unchecked(0) as i32,
-            LANES as i32 - 1,
-        );
-        self.it = slice.get_unchecked(1..).iter();
-    }
-
-    #[target_feature(enable = "sse4.2")]
-    unsafe fn cmp_as_mask(&self, y: __m128i) -> usize {
-        _mm_movemask_epi8(_mm_cmpeq_epi8(self.buf, y)) as usize
-    }
-
-    #[target_feature(enable = "sse4.2")]
-    unsafe fn cmp_char(&self, y: u8) -> __m128i {
-        _mm_cmpeq_epi8(self.buf, _mm_set1_epi8(y as i8))
-    }
-}
-
-impl<'a> Iterator for TxtWin<'a> {
-    type Item = Self;
-    #[inline(always)]
-    fn next(&mut self) -> Option<Self::Item> {
-        let pre_it = self.it.clone();
-        let pre_buf = self.buf;
-        let shift_buf = unsafe { _mm_bsrli_si128(pre_buf, 1) };
-        self.buf = if let Some(c) = self.it.next() {
-            unsafe { _mm_insert_epi8(shift_buf, *c as i32, LANES as i32 - 1) }
-        } else {
-            shift_buf
-        };
-
-        Some(Self {
-            buf: pre_buf,
-            it: pre_it,
-        })
-    }
 }
 
 #[inline(never)]
@@ -263,7 +272,7 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
         0
     };
 
-    let mut it = TxtWin::new(txt, patoffset).enumerate();
+    let mut it = WinSuffixes::new(txt, patoffset).enumerate();
     for (pos, win) in (&mut it).take(fast_iters_end) {
         let bveq = win.cmp_as_mask(pat_prefix_vec) as usize >> patoffset;
         let offset = cttz_nonzero(bveq);
