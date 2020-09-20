@@ -1,6 +1,3 @@
-#![feature(stdsimd, core_intrinsics)]
-
-
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod sse;
 
@@ -28,7 +25,6 @@ fn push_match(vec: &mut Matches, m: Match) {
     vec.push(m)
 }
 
-
 pub fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     assert!(
         pat.len() > k as usize,
@@ -39,4 +35,3 @@ pub fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
         unsafe { sse::search(k, pat, txt, res) }
     }
 }
-

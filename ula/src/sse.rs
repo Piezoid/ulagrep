@@ -1,7 +1,5 @@
-use std::arch::x86_64::*;
-use std::intrinsics::cttz_nonzero;
-
 use super::{Match, Matches};
+use std::arch::x86_64::*;
 
 const LANES: usize = 16;
 pub const MAXK: usize = LANES / 2 - 1; // Maximum number of error and position of column x=0 in the vector
@@ -167,7 +165,6 @@ unsafe fn simula_fast_fat(
 ) -> Option<(u8, u8)> {
     debug_assert!(txt_win.it.as_slice().len() >= pat.len());
     debug_assert!(k <= MAXK && k > 0);
-    //std::intrinsics::assume(k <= MAXK && k > 0);
 
     let mut pat_ptr = pat.as_ptr();
     let pat_ptr_end = pat_ptr.add(pat.len());
@@ -205,7 +202,7 @@ unsafe fn simula_fast_fat(
     iter_or_loop!(5);
     iter_or_loop!(6);
     iter_or_loop!(7);
-    None
+    std::hint::unreachable_unchecked()
 }
 
 /// Left pads bytes from `data` with `offset` zeros, returns a sse registers and the remaining suffix
@@ -234,10 +231,8 @@ unsafe fn cmp(pat: &[u8], txt: &[u8]) -> bool {
 #[inline(never)]
 #[target_feature(enable = "sse4.2")]
 pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
-    debug_assert!(pat.len() > k);
-    debug_assert!(k <= MAXK);
-    std::intrinsics::assume(k <= MAXK);
-    std::intrinsics::assume(pat.len() > k);
+    assert!(pat.len() > k);
+    assert!(k <= MAXK);
 
     // MAXK-1: Position of the first character of the pattern in SIMD reg.
     // When the n-th char matches, the center of the NULA window (x=0) will be at position MAXK+n
@@ -275,10 +270,10 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     let mut it = WinSuffixes::new(txt, patoffset).enumerate();
     for (pos, win) in (&mut it).take(fast_iters_end) {
         let bveq = win.cmp_as_mask(pat_prefix_vec) as usize >> patoffset;
-        let offset = cttz_nonzero(bveq);
 
         // If one of the k+1 chars of the pattern matches with the current suffixes
         let maybe_match = if bveq != 0 {
+            let offset = bveq.trailing_zeros() as usize;
             if k > offset {
                 let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
                 let keff = k - offset;
@@ -322,18 +317,20 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     let slow_iter_end = txt.len() + k + 1 - pat.len();
     for (pos, win) in it.take(slow_iter_end - fast_iters_end) {
         let bveq = win.cmp_as_mask(pat_prefix_vec) >> patoffset;
-        let offset = cttz_nonzero(bveq);
-
-        if bveq != 0 && offset <= k {
-            let keff = k - offset;
-            let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
-            if let Some((idx, score)) = simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win)
-            {
-                res.push(Match {
-                    pos: pos,
-                    delta: idx as i8 - (MAXK + offset) as i8,
-                    dist: (k + 1) as u8 - score,
-                });
+        if bveq != 0 {
+            let offset = bveq.trailing_zeros() as usize;
+            if offset <= k {
+                let keff = k - offset;
+                let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
+                if let Some((idx, score)) =
+                    simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win)
+                {
+                    res.push(Match {
+                        pos: pos,
+                        delta: idx as i8 - (MAXK + offset) as i8,
+                        dist: (k + 1) as u8 - score,
+                    });
+                }
             }
         }
     }
