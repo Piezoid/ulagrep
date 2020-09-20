@@ -347,7 +347,7 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
 
         if likely(bveq != 0 && offset <= k) {
             let keff = k - offset;
-            let ula = init_ula(keff, MAXK + offset);
+            let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
             if let Some((idx, score)) = simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win)
             {
                 res.push(Match {
