@@ -268,71 +268,60 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     } else {
         0
     };
-
+    let nsuffixes = txt.len() + k + 1 - pat.len();
     let mut it = WinSuffixes::new(txt, patoffset).enumerate();
-    for (pos, win) in (&mut it).take(fast_iters_end) {
+    for (pos, win) in (&mut it).take(nsuffixes) {
         let bveq = win.cmp_as_mask(pat_prefix_vec) as usize >> patoffset;
 
         // If one of the k+1 chars of the pattern matches with the current suffixes
-        let maybe_match = if bveq != 0 {
-            let offset = bveq.trailing_zeros() as usize;
-            if k > offset {
-                let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
-                let keff = k - offset;
-                if let Some((idx, score)) =
-                    simula_fast_fat(keff, pat.get_unchecked(offset + 1..), ula, win)
-                {
-                    Some(Match {
-                        pos: pos,
-                        delta: idx as i8 - (MAXK + offset) as i8,
-                        dist: (k + 1) as u8 - score,
-                    })
-                } else {
-                    None
-                }
-            } else {
-                if bveq == eqkeff0_mask
-                    && (pat.len() <= txt_vec_len
-                        || cmp(pat.get_unchecked(txt_vec_len..), win.it.as_slice()))
-                {
-                    // Case offset == k. See note on eqkeff0_mask declaration
-                    debug_assert!(cmp(&pat[offset..], &txt[offset + pos..]));
-                    Some(Match {
-                        pos: pos,
-                        delta: 0,
-                        dist: k as u8,
-                    })
-                } else {
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // Using Iterator::filter_map + Vec::extend was slow...
-        if let Some(m) = maybe_match {
-            crate::push_match(res, m);
-        }
-    }
-
-    let slow_iter_end = txt.len() + k + 1 - pat.len();
-    for (pos, win) in it.take(slow_iter_end - fast_iters_end) {
-        let bveq = win.cmp_as_mask(pat_prefix_vec) >> patoffset;
         if bveq != 0 {
             let offset = bveq.trailing_zeros() as usize;
-            if offset <= k {
-                let keff = k - offset;
-                let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
-                if let Some((idx, score)) =
-                    simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win)
-                {
-                    res.push(Match {
-                        pos: pos,
-                        delta: idx as i8 - (MAXK + offset) as i8,
-                        dist: (k + 1) as u8 - score,
-                    });
+            let maybe_match = if pos < fast_iters_end {
+                if k > offset {
+                    let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
+                    let keff = k - offset;
+                    simula_fast_fat(keff, pat.get_unchecked(offset + 1..), ula, win).map(
+                        |(idx, score)| Match {
+                            pos: pos,
+                            delta: idx as i8 - (MAXK + offset) as i8,
+                            dist: (k + 1) as u8 - score,
+                        },
+                    )
+                } else {
+                    if bveq == eqkeff0_mask
+                        && (pat.len() <= txt_vec_len
+                            || cmp(pat.get_unchecked(txt_vec_len..), win.it.as_slice()))
+                    {
+                        // Case offset == k. See note on eqkeff0_mask declaration
+                        debug_assert!(cmp(&pat[offset..], &txt[offset + pos..]));
+                        Some(Match {
+                            pos: pos,
+                            delta: 0,
+                            dist: k as u8,
+                        })
+                    } else {
+                        None
+                    }
                 }
+            } else {
+                // From now on, we must check that we are in bound in the text, or add padding
+                if k >= offset {
+                    let keff = k - offset;
+                    let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
+                    simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win).map(
+                        |(idx, score)| Match {
+                            pos: pos,
+                            delta: idx as i8 - (MAXK + offset) as i8,
+                            dist: (k + 1) as u8 - score,
+                        },
+                    )
+                } else {
+                    None
+                }
+            };
+            // Using Iterator::filter_map + Vec::extend was slow...
+            if let Some(m) = maybe_match {
+                res.push(m);
             }
         }
     }
