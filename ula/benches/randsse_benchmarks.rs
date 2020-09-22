@@ -53,11 +53,14 @@ fn get_url_data<'a, P: AsRef<Path>>(url: &'a str, out_dir: P) -> Result<(Vec<u8>
 }
 
 fn bench_corpora(c: &mut Criterion) {
-    for url in ["https://github.com/smart-tool/smart/raw/master/data/genome/ecoli.txt",
-    "https://github.com/smart-tool/smart/raw/master/data/protein/sc.txt",
-    "https://github.com/smart-tool/smart/raw/master/data/englishTexts/bible.txt",
-    ].iter() {
-        bench_data(c, url, 1<<19); 
+    for url in [
+        "https://github.com/smart-tool/smart/raw/master/data/genome/ecoli.txt",
+        "https://github.com/smart-tool/smart/raw/master/data/protein/sc.txt",
+        "https://github.com/smart-tool/smart/raw/master/data/englishTexts/bible.txt",
+    ]
+    .iter()
+    {
+        bench_data(c, url, 1 << 19);
     }
 }
 
@@ -95,7 +98,7 @@ fn bench_data(c: &mut Criterion, url: &str, size: usize) {
                         black_box(&data),
                         black_box(&mut results),
                     );
-                    debug_assert!(results.len() > 0);
+                    debug_assert!(!results.is_empty());
                     results.len()
                 });
             });

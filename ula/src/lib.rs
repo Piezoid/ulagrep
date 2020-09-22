@@ -20,10 +20,6 @@ impl Match {
 }
 
 type Matches = Vec<Match>;
-#[inline(always)]
-fn push_match(vec: &mut Matches, m: Match) {
-    vec.push(m)
-}
 
 pub fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
     assert!(

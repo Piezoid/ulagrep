@@ -282,26 +282,24 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
                     let keff = k - offset;
                     simula_fast_fat(keff, pat.get_unchecked(offset + 1..), ula, win).map(
                         |(idx, score)| Match {
-                            pos: pos,
+                            pos,
                             delta: idx as i8 - (MAXK + offset) as i8,
                             dist: (k + 1) as u8 - score,
                         },
                     )
+                } else if bveq == eqkeff0_mask
+                    && (pat.len() <= txt_vec_len
+                        || cmp(pat.get_unchecked(txt_vec_len..), win.it.as_slice()))
+                {
+                    // Case offset == k. See note on eqkeff0_mask declaration
+                    debug_assert!(cmp(&pat[offset..], &txt[offset + pos..]));
+                    Some(Match {
+                        pos,
+                        delta: 0,
+                        dist: k as u8,
+                    })
                 } else {
-                    if bveq == eqkeff0_mask
-                        && (pat.len() <= txt_vec_len
-                            || cmp(pat.get_unchecked(txt_vec_len..), win.it.as_slice()))
-                    {
-                        // Case offset == k. See note on eqkeff0_mask declaration
-                        debug_assert!(cmp(&pat[offset..], &txt[offset + pos..]));
-                        Some(Match {
-                            pos: pos,
-                            delta: 0,
-                            dist: k as u8,
-                        })
-                    } else {
-                        None
-                    }
+                    None
                 }
             } else {
                 // From now on, we must check that we are in bound in the text, or add padding
@@ -310,7 +308,7 @@ pub unsafe fn search(k: usize, pat: &[u8], txt: &[u8], res: &mut Matches) {
                     let ula = _mm_load_si128((&ula0 as *const __m128i).add(offset));
                     simula_slow(keff, pat.get_unchecked(offset + 1..), ula, win).map(
                         |(idx, score)| Match {
-                            pos: pos,
+                            pos,
                             delta: idx as i8 - (MAXK + offset) as i8,
                             dist: (k + 1) as u8 - score,
                         },

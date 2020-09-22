@@ -47,7 +47,7 @@ fn forall_mutations<F: FnMut(&[u8], BString, usize, isize)>(max_dist: usize, mut
                             [
                                 &pat[..pos],
                                 subs,
-                                &vec!['%' as u8; delta_abs],
+                                &vec![b'%'; delta_abs],
                                 &pat[pos + nsubs..],
                             ]
                             .concat(),
@@ -75,21 +75,25 @@ pub fn test_simple_patterns(
                 let txt = &pad(&txt, '$', lpad, rpad);
 
                 unsafe { search(dist as usize, pat, txt, &mut res) };
-                assert!(res.len() > 0);
-                for occ in res.iter() {
-                    assert_eq!(occ.pos as usize, lpad);
-                    assert_eq!(occ.dist as usize, dist);
-                    assert_eq!(occ.delta as isize, delta);
-                    break;
-                }
+                assert!(!res.is_empty());
+                let occ = res[0];
+                assert_eq!(occ.pos as usize, lpad);
+                assert_eq!(occ.dist as usize, dist);
+                assert_eq!(occ.delta as isize, delta);
                 if res.len() > 1 && res[0].end() != res[1].end() {
-                    println!("k:{}, pat:{:?} txt:{:?} {:?}", dist, std::str::from_utf8(pat).unwrap(),std::str::from_utf8(txt).unwrap(), res);
+                    println!(
+                        "k:{}, pat:{:?} txt:{:?} {:?}",
+                        dist,
+                        std::str::from_utf8(pat).unwrap(),
+                        std::str::from_utf8(txt).unwrap(),
+                        res
+                    );
                 }
                 res.clear();
 
                 if dist > 0 {
                     unsafe { search(dist as usize - 1, pat, &txt, &mut res) };
-                    assert!(res.len() == 0);
+                    assert!(res.is_empty());
                 }
                 npat += 1;
             }
